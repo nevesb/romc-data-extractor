@@ -1,0 +1,32 @@
+# Python virtual environments
+.venv/
+
+# IDE metadata
+.vscode/
+*.code-workspace
+
+# Generated extraction outputs
+data/
+exports/
+*.bin
+third_party/
+
+
+# Compiled / cache
+__pycache__/
+*.pyc
+
+# Temporary and Playground
+playground/
+temp/
+*.luac
+*.log
+
+# Node.js
+node_modules/
+.next/
+.env
+.env.local
+
+# Sub-projects (Separate Git Repos)
+web/

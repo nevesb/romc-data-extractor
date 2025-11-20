@@ -1,0 +1,18 @@
+version: "3.9"
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: romc-mongodb
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: romc
+      MONGO_INITDB_ROOT_PASSWORD: romc
+      MONGO_INITDB_DATABASE: romc
+    volumes:
+      - mongo-data:/data/db
+      - ./exports/mongo:/imports:ro
+volumes:
+  mongo-data:

@@ -1,0 +1,6 @@
+UnityPy==1.23.0
+zstandard==0.25.0
+slpp==1.2.3
+requests==2.32.5
+beautifulsoup4==4.14.2
+pymongo==4.8.0

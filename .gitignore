@@ -4,29 +4,56 @@
 # IDE metadata
 .vscode/
 *.code-workspace
+.idea/
+
+# Environment / secrets
+.env
+.env.local
 
 # Generated extraction outputs
 data/
 exports/
 *.bin
-third_party/
 
+# Third-party binaries (kept locally, user copies from game)
+third_party/
 
 # Compiled / cache
 __pycache__/
 *.pyc
+*.pyo
 
 # Temporary and Playground
 playground/
 temp/
+temp_dump_prod/
+.tmp/
+output/
 *.luac
 *.log
+temp_*
 
-# Node.js
+# Misc local dirs
+docs/
+lua53/
+
+# Downloaded tools
+tools/
+
+# Scripts (removed from repo)
+scripts/
+
+# Node.js / Web app
 node_modules/
 .next/
-.env
-.env.local
 
-# Sub-projects (Separate Git Repos)
-web/
+# OS files
+Thumbs.db
+.DS_Store
+
+# Hello Kitty subproject (removed)
+src/hello_kitty_extract/
+
+# Web app local env
+web/runeatlas/.env
+web/runeatlas/.env.local

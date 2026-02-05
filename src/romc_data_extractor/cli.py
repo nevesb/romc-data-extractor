@@ -85,14 +85,24 @@ def main(argv: Iterable[str] | None = None) -> None:
     extracted_at = _normalize_extracted_at(args.extracted_at)
     context = ExtractionContext(languages=languages, translators=translators, extracted_at=extracted_at)
 
+    errors: list[str] = []
     for module in args.modules:
         processor = PROCESSOR_MAP[module]
-        out_files = processor(paths, context, output_dir)
-        if isinstance(out_files, (list, tuple)):
-            for produced in out_files:
-                print(f"{module} -> {produced}")
-        else:
-            print(f"{module} -> {out_files}")
+        try:
+            out_files = processor(paths, context, output_dir)
+            if isinstance(out_files, (list, tuple)):
+                for produced in out_files:
+                    print(f"{module} -> {produced}")
+            else:
+                print(f"{module} -> {out_files}")
+        except Exception as exc:
+            errors.append(f"{module}: {exc}")
+            print(f"{module} -> FAILED: {exc}")
+
+    if errors:
+        print(f"\n{len(errors)} module(s) failed:")
+        for err in errors:
+            print(f"  - {err}")
 
 
 if __name__ == "__main__":

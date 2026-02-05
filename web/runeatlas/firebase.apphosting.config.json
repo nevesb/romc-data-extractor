@@ -1,0 +1,8 @@
+{
+  "runtime": {
+    "packageManager": "npm",
+    "framework": {
+      "type": "nextjs"
+    }
+  }
+}

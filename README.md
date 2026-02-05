@@ -1,205 +1,234 @@
 # ROMC Data Extractor
 
-Python tooling to mine data from the **Ragnarok M Classic Global** client.  
-It currently focuses on extracting items, monsters, skills, formulas, and icons in a format that can
-be reused to build encyclopaedias similar to community sites.
+Toolkit to extract game data from **Ragnarok M Classic Global** (Android client via LDPlayer) and load it into a local MongoDB database. Includes a [Next.js web app (RuneAtlas)](web/runeatlas) to browse items, monsters, skills, formulas, and buffs.
 
-> NOTE: Some Unity tables (notably the equipment config) are still stored in an
-> encrypted/binary format. The initial version of this extractor concentrates on
-> the plainly encoded tables (items, monsters, skills) so you can start building
-> a database right away while deeper reverse engineering work continues.
+**What gets extracted:** items, monsters, skills, classes, formulas, icons, buffs, and rewards.
 
-## Requirements
+---
 
-* Python 3.10+
-* Java Runtime Environment (needed to decompile the encrypted CommonFun Lua chunks)
-* The game installed locally (default path: `C:\Program Files (x86)\XD\Ragnarok M Classic Global`)
-* The client’s `slua_encrypt.dll` (copy `ro_win_Data\Plugins\x86_64\slua_encrypt.dll` into
-  `src/third_party/slua/` or point the `SLUA_DLL` environment variable to its location)
+## Easy Run
 
-Install the dependencies in a virtual environment:
+If you want to set up everything in one go (Python, Docker, extraction, MongoDB load, and web app):
 
 ```powershell
+# Windows (PowerShell)
+.\setup.ps1
+```
+
+```bash
+# Linux / macOS
+./setup.sh
+```
+
+You can also run individual steps:
+
+```bash
+./setup.sh python    # only set up Python venv
+./setup.sh docker    # only start MongoDB
+./setup.sh extract   # set up Python + extract from LDPlayer
+./setup.sh load      # set up Python + Docker + load data into MongoDB
+./setup.sh web       # only start the web app
+```
+
+The same steps work with `setup.ps1 -Step <step>` on PowerShell.
+
+> If you prefer to run each step manually, follow the detailed guide below.
+
+---
+
+## Prerequisites
+
+| Tool | Why |
+|---|---|
+| **Python 3.10+** | Runs the extractor |
+| **Java Runtime (JRE)** | Needed by `unluac` to decompile Lua chunks |
+| **LDPlayer 9** | Android emulator to run the ROMC client |
+| **Docker** | Runs the local MongoDB instance |
+| **Node.js 20+** | Runs the web app |
+| **Git** | Clone this repo |
+
+---
+
+## Quick Start
+
+### 1. Clone and set up Python
+
+```bash
+git clone https://github.com/<your-user>/romc-data-extractor.git
+cd romc-data-extractor
+
 python -m venv .venv
+
+# Windows (PowerShell)
 .venv\Scripts\python.exe -m pip install --upgrade pip
 .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Linux / macOS
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
 ```
 
-## Usage
+### 2. Install and configure LDPlayer
 
-```
-.venv\Scripts\python.exe -m romc_data_extractor.cli `
-    --game-root "C:\Program Files (x86)\XD\Ragnarok M Classic Global" `
-    --output data `
-    --modules items monsters skills formulas icons
-```
+1. Download and install [LDPlayer 9](https://www.ldplayer.net/).
+2. Inside LDPlayer, open the Google Play Store and install **Ragnarok M Classic Global**.
+3. Launch the game at least once and let it download all the patches/assets.
+4. Enable ADB in LDPlayer: **Settings > Other Settings > ADB debugging > Open local connection**.
 
-This will produce JSON files in the chosen output directory:
+> By default, LDPlayer exposes ADB at `127.0.0.1:5555`. The `adb` binary lives at
+> `C:\LDPlayer\LDPlayer9\adb.exe` (Windows).
 
-* `items.json` – every entry from `Table_Item`, grouped into equipment, headgears,
-  cards, consumables, and furniture (best-effort categorisation).
-* `monsters.json` – monsters with their base attributes, races, and rewards.
-* `skills.json` – all class-branch skill definitions with translated descriptions.
-* `formula_definitions.json` – Lua source lifted directly from the encrypted `CommonFun`
-  TextAssets (requires Java + `unluac` to decode).
-* `formula_usages.json` – in-house mapping of the `CommonFun.calcDamage_*` ids to
-  every skill level that references them (from the game client tables).
-* `icon_manifest.json` + `icons/*.png` – icon sprites extracted from the Unity
-  bundles for items/skills (one PNG per icon id, manifest lists missing ones).
+Verify the connection:
 
-Each record retains the original `##token` identifiers so you can plug in another
-translation table if needed.
-
-### Fast re-run helper
-
-There is a convenience PowerShell script that sequentially runs each module and
-summarises any failures. It automatically falls back to the system `python` if a
-virtualenv is not present.
-
-```
-pwsh scripts/run_extraction.ps1 `
-    -GameRoot "C:\Users\braya\romc-android" `
-    -Output data `
-    -Modules items,monsters,skills,classes,formulas,icons
+```bash
+"C:\LDPlayer\LDPlayer9\adb.exe" devices
+# Should show: emulator-5554  device  (or similar)
 ```
 
-Internally it delegates to the same CLI shown above, so you can customise the
-module list or point it at a different installation path as needed.
+### 3. Copy the encryption DLL
 
-> **Heads-up:** the latest Android client updated several encrypted tables
-> (notably `Table_Class` and the `CommonFun` TextAssets) to a new Lua constant
-> encoding. Until `unluac` gains support for the new type codes, these modules
-> will log an error in the summary while the remaining datasets extract normally.
+The extractor needs `slua_encrypt.dll` from the game client to decrypt Lua tables. If it's not already in the repo:
 
-### Full Android pipeline (ADB + extraction + snapshot)
+```bash
+# From the Windows PC client:
+copy "C:\Program Files (x86)\XD\Ragnarok M Classic Global\ro_win_Data\Plugins\x86_64\slua_encrypt.dll" src\third_party\slua\
 
-If you are mining data from the Android build sitting inside LDPlayer, run the
-end-to-end PowerShell helper. It takes care of pulling the files through ADB,
-running every extractor module, copying the JSON/Lua/icons into a timestamped
-folder under `exports/datasets`, and printing a quick summary for sanity checks.
-
-```powershell
-pwsh scripts/full_pipeline.ps1 `
-    -AdbPath "C:\LDPlayer\LDPlayer9\adb.exe" `
-    -DeviceId emulator-5554 `
-    -RemotePath "/sdcard/Android/data/com.gravityus.romgzeny.aos/files" `
-    -LocalMirror "C:\Users\braya\romc-android" `
-    -Output data
+# Or pull it from LDPlayer via ADB:
+adb pull /data/app/<package-folder>/lib/arm64/libslua_encrypt.so src/third_party/slua/
 ```
 
-Steps performed:
+### 4. Extract data from LDPlayer via ADB
 
-1. Runs `adb devices`, selects the requested emulator/device (or the first
-   connected one) and mirrors the remote folder locally.
-2. Invokes the extractor sequentially for `items`, `monsters`, `skills`,
-   `classes`, `formulas` and `icons`, storing everything under `data/`.
-3. Copies the fresh data into `exports/datasets/<timestamp>`.
-4. Prints one-line statistics (totals and icon coverage) so you can confirm the
-   export looks sane before pushing it downstream.
+The all-in-one pipeline pulls files from the emulator, runs every extractor module, and exports JSONL files ready for MongoDB.
 
-Pass `-SkipPull` whenever you already have a local mirror and only need to
-regenerate the JSON files.
+The `--package` flag is optional — the pipeline auto-detects between `com.gravity.romcg` and `com.gravityus.romgzeny.aos`:
 
-## LDPlayer / ADB pipeline
+```bash
+# Windows (PowerShell)
+$env:PYTHONPATH="src"
+python -m romc_data_extractor.ldplayer_pipeline `
+    --adb-path "C:\LDPlayer\LDPlayer9\adb.exe" `
+    --tag 20250205 `
+    --modules items monsters skills classes formulas icons buffs rewards
 
-When you extract the Android client through LDPlayer you can automate the whole
-workflow (pull APK → decode StreamingAssets → export JSON → prepare Mongo
-imports) with the helper CLI:
-
-```
-PYTHONPATH=src python -m romc_data_extractor.ldplayer_pipeline ^
+# Windows (cmd)
+set PYTHONPATH=src
+python -m romc_data_extractor.ldplayer_pipeline ^
     --adb-path "C:\LDPlayer\LDPlayer9\adb.exe" ^
-    --package com.gravity.romcg ^
-    --tag 20240905 ^
-    --modules items monsters skills formulas icons
+    --tag 20250205 ^
+    --modules items monsters skills classes formulas icons buffs rewards
 ```
 
-The command will:
+Replace `20250205` with today's date (or any tag you like) to version your snapshots.
 
-1. Ensure at least one device is connected via `adb devices`.
-2. Locate every installed APK split for the ROMC package, pull them one by one
-   until it finds the one containing `assets/bin/Data/StreamingAssets`. If none
-   of the splits ship the Unity data, it automatically pulls
-   `/sdcard/Android/data/<package>/files` and `/sdcard/Android/obb/<package>`,
-   unpacking any `.obb` asset bundle it finds until `StreamingAssets` shows up.
-3. Run the regular extractor for the modules you selected.
-4. Emit two folder trees:
-   * `exports/datasets/<tag>` → structured JSON identical to the `data/` folder.
-   * `exports/mongo/<tag>` → one JSONL file per collection (items, monsters,
-     skills, classes, formula_definitions, formula_usages) ready for `mongoimport`.
+This produces:
+- `exports/datasets/<tag>/` — structured JSON files
+- `exports/mongo/<tag>/` — one `.jsonl` file per collection, ready for `mongoimport`
 
-Use `--keep-temp` if you need to archive the pulled APK/assets for auditing.
+> **Tip:** If you already pulled the game files locally, use the direct CLI instead:
+> ```bash
+> python -m romc_data_extractor.cli --game-root "C:\Users\you\romc-android" --output data --modules items monsters skills classes formulas icons buffs rewards
+> ```
 
-## MongoDB + Docker
+### 5. Start MongoDB with Docker
 
-A ready-to-run Mongo 7 instance is defined in `docker-compose.yml`:
-
-```
-docker compose up -d mongodb
+```bash
+cp .env.example .env   # adjust credentials if needed
+docker compose up -d
 ```
 
-Credentials (default): `romc` / `romc`, database `romc`, port `27017`.
+This starts a **MongoDB 7.0** container on port `27017` with user `romc` / password `romc`.
 
-After running the LDPlayer pipeline, ingest the JSONL dataset with:
+### 6. Load extracted data into MongoDB
 
-```
-PYTHONPATH=src python -m romc_data_extractor.mongo_loader ^
-    --mongo-uri mongodb://romc:romc@localhost:27017 ^
+```bash
+# Windows (PowerShell)
+$env:PYTHONPATH="src"
+python -m romc_data_extractor.mongo_loader `
+    --mongo-uri "mongodb://romc:romc@localhost:27017" `
+    --database romc `
+    --dataset exports/mongo/20250205 `
+    --drop-first
+
+# Windows (cmd)
+set PYTHONPATH=src
+python -m romc_data_extractor.mongo_loader ^
+    --mongo-uri "mongodb://romc:romc@localhost:27017" ^
     --database romc ^
-    --dataset exports/mongo/20240905 ^
+    --dataset exports/mongo/20250205 ^
     --drop-first
 ```
 
-You can limit the collections by passing `--collections items monsters`.
+You can limit which collections to import with `--collections items monsters`.
 
-## RuneAtlas (Node.js site)
+### 7. Run the web app (RuneAtlas)
 
-The web interface lives under `web/runeatlas` and ships with the project name
-**RuneAtlas**. It mimics the feel of the reference sites you shared, includes
-ad slots, and exposes dedicated pages for items, skills, monsters and formulas.
+The web interface lives inside this repo at `web/runeatlas/`:
 
-Basic workflow:
-
-```
-cd web\runeatlas
-cp .env.example .env   # adjust Mongo URI + NEXT_PUBLIC_ADSENSE_CLIENT
+```bash
+cd web/runeatlas
+cp .env.example .env
 npm install
-npm run dev            # http://localhost:3000
+npm run dev
 ```
 
-The site reads directly from MongoDB, so keep `docker compose` running or point
-`MONGODB_URI` to your own cluster. Every route supports query-string filters, and
-the landing page SearchPanel queries `/api/search` to locate any entity.
+Open **http://localhost:3000** to browse items, monsters, skills, formulas, and buffs.
 
-### Ad slots
+---
 
-`NEXT_PUBLIC_ADSENSE_CLIENT` enables the Google AdSense script globally. Each
-page places `AdSlot` components (e.g. leaderboard, sidebar). Provide a `slotId`
-that matches the unit configured in AdSense (or any other network) and the
-component will render the `<ins class="adsbygoogle">` placeholder; when no
-client ID is set the component shows a styled placeholder so you can keep
-designing the layout without leaking impressions.
+## Project Structure
 
-## Architecture
+```
+romc-data-extractor/
+├── src/
+│   └── romc_data_extractor/     # Main Python package
+│       ├── cli.py               # CLI entrypoint
+│       ├── ldplayer_pipeline.py  # ADB pull + extract + mongo export
+│       ├── mongo_loader.py      # JSONL → MongoDB importer
+│       ├── config.py            # Game path configuration
+│       ├── context.py           # Extraction context (translations, metadata)
+│       ├── translation.py       # Multi-language translation system
+│       ├── lua_table.py         # Lua table parser
+│       ├── lua_decoder.py       # Lua decoding
+│       ├── unity_utils.py       # UnityPy integration
+│       ├── rom_des.py           # DES decryption
+│       └── processors/          # Per-domain extractors
+│           ├── items.py
+│           ├── monsters.py
+│           ├── skills.py
+│           ├── classes.py
+│           ├── formulas.py
+│           ├── assets.py        # Icon extraction
+│           ├── buffs.py
+│           └── rewards.py
+├── src/third_party/
+│   ├── slua/slua_encrypt.dll    # Game encryption DLL (copy from client)
+│   └── unluac/*.jar             # Lua decompiler
+├── web/runeatlas/               # Next.js web app
+├── docker-compose.yml           # MongoDB 7.0 container
+├── requirements.txt             # Python dependencies
+├── .env.example                 # Environment template
+├── setup.ps1                    # One-click setup (Windows/PowerShell)
+├── setup.sh                     # One-click setup (Linux/macOS)
+└── README.md
+```
 
-* `romc_data_extractor/unity_utils.py` – UnityPy bootstrap + compression patches.
-* `romc_data_extractor/lua_table.py` – generic parser for the plaintext LUA tables.
-* `romc_data_extractor/translation.py` – loader for the segmented string tables in
-  `StreamingAssets/resources/lang/translate`.
-* `romc_data_extractor/processors/*` – per-domain extractors that serialise to JSON.
-* `romc_data_extractor/cli.py` – orchestrates everything via CLI arguments.
+## Available Modules
 
-## Next steps
+| Module | Output | Description |
+|---|---|---|
+| `items` | `items.json` | Equipment, headgears, cards, consumables, furniture |
+| `monsters` | `monsters.json` | Monsters with attributes, races, rewards |
+| `skills` | `skills.json` | Skill definitions with translated descriptions |
+| `classes` | `classes.json` | Job/class definitions |
+| `formulas` | `formula_definitions.json`, `formula_usages.json` | Lua damage formulas from CommonFun |
+| `icons` | `icon_manifest.json` + `icons/*.png` | Item/skill icon sprites |
+| `buffs` | `buffs.json` | Buff/status effect definitions |
+| `rewards` | `rewards.json` | Reward/loot drop definitions |
 
-* Reverse the binary format used by `Table_Equip` and related files (they appear to
-  be encrypted/packed TextAssets). Once decoded we can upgrade the extractor with
-  full weapon/armor stats.
-* Merge monster attribute tables (e.g. `Table_MonsterAttrDyn`) for more granular
-  stat curves.
-* Enrich items with icon export and localisation for additional languages.
+---
 
+## License
 
-
-
-
-
+This project is provided for educational and community purposes. Game assets and data belong to their respective owners (Gravity, XD Inc.).

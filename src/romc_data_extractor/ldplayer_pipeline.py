@@ -14,7 +14,7 @@ from zipfile import ZipFile
 from .cli import PROCESSOR_MAP, main as extractor_main
 
 
-DEFAULT_PACKAGE = "com.gravity.romcg"
+DEFAULT_PACKAGES = ["com.gravity.romcg", "com.gravityus.romgzeny.aos"]
 
 # Datasets that should be exported as newline-delimited JSON for MongoDB.
 EXPORTABLE_DATASETS = {
@@ -49,6 +49,18 @@ def _ensure_device(adb_path: str) -> None:
     ]
     if not devices:
         raise AdbError("No LDPlayer/Android device detected via `adb devices`.")
+
+
+def _resolve_package(adb_path: str, packages: list[str]) -> str:
+    """Try each package name and return the first one installed on the device."""
+    for package in packages:
+        result = subprocess.run(
+            [adb_path, "shell", "pm", "path", package],
+            check=False, capture_output=True, text=True,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return package
+    raise AdbError(f"None of the packages found on the device: {packages}")
 
 
 def _resolve_apk_paths(adb_path: str, package: str) -> list[str]:
@@ -88,9 +100,16 @@ def _extract_streaming_assets_from_archive(archive_path: Path, extract_dir: Path
 
 
 def _locate_streaming_assets_dir(root: Path) -> Path | None:
+    # Standard Unity layout: look for StreamingAssets/
     for candidate in root.rglob("StreamingAssets"):
         if candidate.is_dir():
             return candidate.parent
+    # Android patch layout: game downloads into a folder that directly contains
+    # resources/script2/ (no StreamingAssets wrapper).  Return that folder so
+    # GamePaths falls back to using it as the streaming root.
+    for candidate in root.rglob("script2"):
+        if candidate.is_dir() and candidate.parent.name == "resources":
+            return candidate.parent.parent
     return None
 
 
@@ -160,7 +179,7 @@ def _export_for_mongo(raw_dir: Path, mongo_dir: Path, extracted_at: str) -> None
 def _parse_args(argv: Iterable[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Pull ROMC assets from LDPlayer via ADB and run the extractor.")
     parser.add_argument("--adb-path", default="adb", help="Path to the adb executable.")
-    parser.add_argument("--package", default=DEFAULT_PACKAGE, help="Android package name housing the ROMC client.")
+    parser.add_argument("--package", default=None, help="Android package name (auto-detected if omitted).")
     parser.add_argument(
         "--tag",
         default=datetime.now(timezone.utc).strftime("%Y%m%d"),
@@ -195,9 +214,11 @@ def main(argv: Iterable[str] | None = None) -> None:
     mongo_dir.mkdir(parents=True, exist_ok=True)
 
     _ensure_device(args.adb_path)
-    remote_apks = _resolve_apk_paths(args.adb_path, args.package)
+    package = args.package or _resolve_package(args.adb_path, DEFAULT_PACKAGES)
+    print(f"Using package: {package}")
+    remote_apks = _resolve_apk_paths(args.adb_path, package)
 
-    with tempfile.TemporaryDirectory(prefix="romc_ldplayer_") as temp_dir:
+    with tempfile.TemporaryDirectory(prefix="romc_ldplayer_", ignore_cleanup_errors=True) as temp_dir:
         temp_root = Path(temp_dir)
         data_root = None
         apk_path: Path | None = None
@@ -218,7 +239,7 @@ def main(argv: Iterable[str] | None = None) -> None:
                 errors.append(f"{remote_apk}: {exc}")
 
         if data_root is None or apk_path is None or extracted_assets is None:
-            external_root, external_errors = _pull_external_storage(args.adb_path, args.package, temp_root)
+            external_root, external_errors = _pull_external_storage(args.adb_path, package, temp_root)
             if external_root is not None:
                 data_root = external_root
             else:

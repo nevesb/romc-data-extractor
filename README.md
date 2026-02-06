@@ -54,7 +54,7 @@ The same steps work with `setup.ps1 -Step <step>` on PowerShell.
 ### 1. Clone and set up Python
 
 ```bash
-git clone https://github.com/<your-user>/romc-data-extractor.git
+git clone https://github.com/nevesb/romc-data-extractor.git
 cd romc-data-extractor
 
 python -m venv .venv
